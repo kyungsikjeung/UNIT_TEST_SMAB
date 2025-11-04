@@ -32,7 +32,7 @@ typedef struct {
 
 #define FAULT_LATCH_THRESHOLD 3  // 3번 연속 감지 시 확정
 
-/* ===== Hardware Abstraction Layer ===== */
+
 
 // Fault 입력별 인덱스
 typedef enum {
@@ -45,16 +45,17 @@ typedef enum {
 // 2차원 테스트 데이터: [입력종류][시간순서]
 // true = fault, false = normal
 // ! TODO :  배열 아예 지울것
+// 각 행은 전역 카운터 기준 시간 순서 (같은 인덱스 = 같은 시점)
 static const bool dummy_test_data[FAULT_INPUT_MAX][33] = {
-    // LCD Fault Input (Active High)
+    // LCD Fault Input (Active High) - 전역 카운터 기준
     {
-        true, true, true,           // 0-2:   3번 연속 에러 → FAULT 리포트
+        true, true, true,           // 0-2:   3번 연속 에러 → 카운터 3일 때 FAULT 리포트
         true, true,                 // 3-4:   에러 계속 (리포트 없음)
-        false, false, false,        // 5-7:   3번 연속 정상 → CLEAR 리포트
+        false, false, false,        // 5-7:   3번 연속 정상 → 카운터 8일 때 CLEAR 리포트
         false, false,               // 8-9:   정상 계속
         true, true, false,          // 10-12: 불규칙 (2번만 에러)
-        true, true, true,           // 13-15: 3번 연속 에러 → FAULT 리포트
-        false, false, false,        // 16-18: 3번 연속 정상 → CLEAR 리포트
+        true, true, true,           // 13-15: 3번 연속 에러 → 카운터 16일 때 FAULT 리포트
+        false, false, false,        // 16-18: 3번 연속 정상 → 카운터 19일 때 CLEAR 리포트
         false, false, false,        // 19-21: 정상 계속
         false, false, false,        // 22-24: 정상 계속
         false, false, false,        // 25-27: 정상 계속
@@ -62,34 +63,34 @@ static const bool dummy_test_data[FAULT_INPUT_MAX][33] = {
         false, false                // 31-32: 정상
     },
     
-    // LED Fault Input (Active High)
+    // LED Fault Input (Active High) - 전역 카운터 기준
     {
         false, false, false,        // 0-2:   정상
-        true, true, true,           // 3-5:   3번 연속 에러 → FAULT 리포트
+        true, true, true,           // 3-5:   3번 연속 에러 → 카운터 6일 때 FAULT 리포트
         true, true,                 // 6-7:   에러 계속
-        false, false, false,        // 8-10:  3번 연속 정상 → CLEAR 리포트
+        false, false, false,        // 8-10:  3번 연속 정상 → 카운터 11일 때 CLEAR 리포트
         true, false, true,          // 11-13: 불규칙
         false, false, false,        // 14-16: 정상
-        true, true, true,           // 17-19: 3번 연속 에러 → FAULT 리포트
-        false, false, false,        // 20-22: 3번 연속 정상 → CLEAR 리포트
+        true, true, true,           // 17-19: 3번 연속 에러 → 카운터 20일 때 FAULT 리포트
+        false, false, false,        // 20-22: 3번 연속 정상 → 카운터 23일 때 CLEAR 리포트
         false, false, false,        // 23-25: 정상
         false, false, false,        // 26-28: 정상
         false, false, false,        // 29-31: 정상
         false                       // 32:    정상
     },
     
-    // GMSL Fault Input (Active High)
+    // GMSL Fault Input (Active High) - 전역 카운터 기준
     {
         false, false, false,        // 0-2:   정상
         false, false, false,        // 3-5:   정상
-        true, true, true,           // 6-8:   3번 연속 에러 → FAULT 리포트
+        true, true, true,           // 6-8:   3번 연속 에러 → 카운터 9일 때 FAULT 리포트
         true,                       // 9:     에러 계속
-        false, false, false,        // 10-12: 3번 연속 정상 → CLEAR 리포트
+        false, false, false,        // 10-12: 3번 연속 정상 → 카운터 13일 때 CLEAR 리포트
         false, false,               // 13-14: 정상
         true, false, true,          // 15-17: 불규칙
         false, true, true,          // 18-20: 불규칙
-        true, true, true,           // 21-23: 3번 연속 에러 → FAULT 리포트
-        false, false, false,        // 24-26: 3번 연속 정상 → CLEAR 리포트
+        true, true, true,           // 21-23: 3번 연속 에러 → 카운터 24일 때 FAULT 리포트
+        false, false, false,        // 24-26: 3번 연속 정상 → 카운터 27일 때 CLEAR 리포트
         false, false, false,        // 27-29: 정상
         false, false, false         // 30-32: 정상
     }
@@ -141,17 +142,20 @@ static fault_inputs_t read_fault_inputs_snapshot(void) {
  * @param clear_count   클리어 카운터 (입출력)
  * @param state         현재 상태 (입출력)
  * @param name          fault 이름 (디버깅)
+ * @param tick          현재 틱 (디버깅용)
  */
 static void process_single_fault(
     bool has_fault,
     volatile uint8_t *error_count,
     volatile uint8_t *clear_count,
     fault_state_t *state,
-    const char *name
+    const char *name,
+    int tick
 ) {
     if (!error_count || !clear_count || !state || !name) {
         return;
     } 
+    
     if (has_fault) {
         // 에러 감지
         if (*error_count < FAULT_LATCH_THRESHOLD) {
@@ -161,7 +165,7 @@ static void process_single_fault(
         
         // 3번 연속 에러 감지 시 상태 전환 및 리포트
         if (*error_count >= FAULT_LATCH_THRESHOLD && *state == FAULT_STATE_NORMAL) {
-            printf("[FAULT] %s Error detected (latched)\n", name);
+            printf("[FAULT] %s Error detected (latched) [count=%d, tick=%d]\n", name, *error_count, tick);
             *state = FAULT_STATE_ERROR_LATCHED;
         }
     } else {
@@ -172,8 +176,9 @@ static void process_single_fault(
         *error_count = 0;
         
         // 3번 연속 클리어 감지 시 상태 전환 및 리포트
+        // ✅ 수정: ERROR_LATCHED 상태일 때만 CLEAR 리포트
         if (*clear_count >= FAULT_LATCH_THRESHOLD && *state == FAULT_STATE_ERROR_LATCHED) {
-            printf("[CLEAR] %s Error cleared\n", name);
+            printf("[CLEAR] %s Error cleared [count=%d, tick=%d]\n", name, *clear_count, tick);
             *state = FAULT_STATE_NORMAL;
         }
     }
@@ -187,12 +192,15 @@ static void process_single_fault(
  */
 void fault_input_10ms_task(void){
     fault_inputs_t inputs = read_fault_inputs_snapshot(); // Fault 읽기
+    int tick = dummy_counter - 1;  // 현재 틱 (방금 증가한 후이므로 -1)
+    
     process_single_fault(
         inputs.lcd_fault, 
         &lcdErrorCount, 
         &lcdErrorClearCount, 
         &lcdState, 
-        "LCD"
+        "LCD",
+        tick // ! 니증에 Tick 제거 할것
     );
     
     process_single_fault(
@@ -200,7 +208,8 @@ void fault_input_10ms_task(void){
         &ledErrorCount, 
         &ledErrorClearCount, 
         &ledState, 
-        "LED"
+        "LED",
+        tick // ! 니증에 Tick 제거 할것
     );
     
     process_single_fault(
@@ -208,7 +217,8 @@ void fault_input_10ms_task(void){
         &gmslErrorCount, 
         &gmslErrorClearCount, 
         &gmslState, 
-        "GMSL"
+        "GMSL",
+        tick // ! 니증에 Tick 제거 할것
     );
 }
 

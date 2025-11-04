@@ -32,6 +32,17 @@ static uint32_t g_boot_timeout = 10000; // 10초 후 일반 모드로 전환
 /* 테스크 슬롯 */
 static task_slot_t s_tasks[MAX_TASKS];
 
+/* ===== 내부 함수 선언 ===== */
+static void init_task_slot(void);
+static void register_tasks(void);
+static void register_task(task_mode_t mode, task_fn_t fn, uint16_t delay_ms, uint16_t period_ms);
+static void unregister_task(int idx);
+static void run_task_scheduler(void);
+static inline int time_after_eq(uint32_t a, uint32_t b);
+static void run_task_10ms(void);
+static void run_task_50ms(void);
+
+/* ===== ISR 시뮬레이션 ===== */
 
 void test_isr(void)
 {
